@@ -74,7 +74,7 @@ Return ONLY a valid JSON array. Each element in the array must be an object with
 Do not include any markdown code blocks or extra text. Just output the raw JSON array starting with [ and ending with ]."""
 
           chat_completion = client.chat.completions.create(
-              model="llama-3.3-70b-versatile",
+              model="groq/openai/gpt-oss-120b",
               messages=[
                   {
                       "role": "system",
