@@ -1,4 +1,6 @@
 import json
+import docx
+import pypdf
 import streamlit as st
 from groq import Groq
 
@@ -30,7 +32,8 @@ if "quiz_submitted" not in st.session_state:
 # App Header
 st.title("📝 AI-Powered Interactive Quiz Generator")
 st.write(
-    "Generate custom quizzes instantly using Groq AI or take available quizzes!"
+    "Generate custom quizzes instantly from topics or uploaded documents using"
+    " Groq AI!"
 )
 
 # Sidebar Navigation
@@ -39,10 +42,30 @@ nav_option = st.sidebar.radio(
     ["Generate AI Quiz", "Take Available Quiz", "Create Manual Question"],
 )
 
-# Reset submission state if switching navigation tabs
+# Reset submission state if switching tabs
 if "last_nav" not in st.session_state or st.session_state.last_nav != nav_option:
   st.session_state.quiz_submitted = False
   st.session_state.last_nav = nav_option
+
+
+# Helper function to extract text from files
+def extract_text_from_file(uploaded_file):
+  file_extension = uploaded_file.name.split(".")[-1].lower()
+  text = ""
+  if file_extension == "txt":
+    text = uploaded_file.getvalue().decode("utf-8")
+  elif file_extension == "pdf":
+    reader = pypdf.PdfReader(uploaded_file)
+    for page in reader.pages:
+      page_text = page.extract_text()
+      if page_text:
+        text += page_text + "\n"
+  elif file_extension in ["docx", "doc"]:
+    doc = docx.Document(uploaded_file)
+    for para in doc.paragraphs:
+      text += para.text + "\n"
+  return text
+
 
 # ----------------------------------------------------
 # 1. GENERATE AI QUIZ
@@ -50,13 +73,34 @@ if "last_nav" not in st.session_state or st.session_state.last_nav != nav_option
 if nav_option == "Generate AI Quiz":
   st.header("🤖 Generate Quiz with Groq AI")
 
-  topic_input = st.text_input(
-      "Enter Subject or Topic",
-      placeholder="e.g., Python Programming, World History, Electrical Power Systems",
+  generation_mode = st.radio(
+      "Choose Generation Source", ["By Topic / Subject", "From Uploaded Document"]
   )
+
   num_mcqs = st.slider(
       "Select Number of MCQs", min_value=10, max_value=100, value=10, step=5
   )
+
+  source_content = ""
+  quiz_title = ""
+
+  if generation_mode == "By Topic / Subject":
+    topic_input = st.text_input(
+        "Enter Subject or Topic",
+        placeholder=(
+            "e.g., Python Programming, World History, Electrical Power Systems"
+        ),
+    )
+    source_content = topic_input
+    quiz_title = f"AI Topic: {topic_input}"
+  else:
+    uploaded_file = st.file_uploader(
+        "Upload a document (.pdf, .docx, .txt)", type=["pdf", "docx", "txt"]
+    )
+    if uploaded_file is not None:
+      with st.spinner("Extracting text from document..."):
+        source_content = extract_text_from_file(uploaded_file)
+        quiz_title = f"AI Doc: {uploaded_file.name}"
 
   if st.button("Generate Quiz via AI"):
     if "GROQ_API_KEY" not in st.secrets:
@@ -64,15 +108,29 @@ if nav_option == "Generate AI Quiz":
           "Groq API Key not found! Please add it to your Streamlit Cloud"
           " Secrets."
       )
-    elif not topic_input.strip():
-      st.error("Please enter a valid topic or subject.")
+    elif not source_content.strip():
+      st.error("Please provide a valid topic or upload a valid document.")
     else:
       with st.spinner(
-          f"Generating {num_mcqs} MCQs on '{topic_input}' using Groq AI..."
+          f"Generating {num_mcqs} MCQs using Groq (openai/gpt-oss-20b)..."
       ):
         try:
           client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-          prompt = f"""Generate exactly {num_mcqs} multiple choice questions about '{topic_input}'.
+
+          if generation_mode == "By Topic / Subject":
+            prompt = f"""Generate exactly {num_mcqs} multiple choice questions about '{source_content}'.
+Return ONLY a valid JSON array. Each element in the array must be an object with these exact keys:
+- "question": string
+- "options": list of 4 string options
+- "answer": the exact string from options that is correct
+
+Do not include any markdown code blocks or extra text. Just output the raw JSON array starting with [ and ending with ]."""
+          else:
+            prompt = f"""Based on the following document content, generate exactly {num_mcqs} multiple choice questions.
+Document content:
+---
+{source_content[:15000]}
+---
 Return ONLY a valid JSON array. Each element in the array must be an object with these exact keys:
 - "question": string
 - "options": list of 4 string options
@@ -105,12 +163,11 @@ Do not include any markdown code blocks or extra text. Just output the raw JSON 
           questions_list = json.loads(response_text)
 
           if isinstance(questions_list, list) and len(questions_list) > 0:
-            quiz_key = f"AI: {topic_input} ({len(questions_list)} Qs)"
-            st.session_state.custom_quizzes[quiz_key] = questions_list
+            final_key = f"{quiz_title} ({len(questions_list)} Qs)"
+            st.session_state.custom_quizzes[final_key] = questions_list
             st.success(
-                f"✅ Successfully generated {len(questions_list)} MCQs for"
-                f" '{topic_input}'! Switch to 'Take Available Quiz' in the"
-                " sidebar to start."
+                f"✅ Successfully generated {len(questions_list)} MCQs! Switch"
+                " to 'Take Available Quiz' in the sidebar to start."
             )
           else:
             st.error("Failed to parse valid questions from AI response.")
@@ -136,11 +193,9 @@ elif nav_option == "Take Available Quiz":
     user_answers = {}
     score = 0
 
-    # Render questions
     for i, q in enumerate(questions):
       st.subheader(f"Q{i+1}: {q['question']}")
 
-      # If already submitted, show results with ticks and crosses
       if st.session_state.quiz_submitted:
         selected_option = st.session_state.get(f"q_{selected_category}_{i}")
         correct_option = q["answer"]
@@ -158,9 +213,7 @@ elif nav_option == "Take Available Quiz":
         if selected_option == correct_option:
           score += 1
         st.write("---")
-
       else:
-        # Interactive radio selection before submission
         user_answers[i] = st.radio(
             f"Select option for Q{i+1}:",
             q["options"],
@@ -168,13 +221,11 @@ elif nav_option == "Take Available Quiz":
         )
         st.write("---")
 
-    # Submit or Retake buttons
     if not st.session_state.quiz_submitted:
       if st.button("Submit Quiz"):
         st.session_state.quiz_submitted = True
         st.rerun()
     else:
-      # Calculate score display
       total = len(questions)
       percentage = (score / total) * 100
       st.subheader("📊 Quiz Results")
