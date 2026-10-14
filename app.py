@@ -24,6 +24,9 @@ if "custom_quizzes" not in st.session_state:
       ]
   }
 
+if "quiz_submitted" not in st.session_state:
+  st.session_state.quiz_submitted = False
+
 # App Header
 st.title("📝 AI-Powered Interactive Quiz Generator")
 st.write(
@@ -35,6 +38,11 @@ nav_option = st.sidebar.radio(
     "Navigation",
     ["Generate AI Quiz", "Take Available Quiz", "Create Manual Question"],
 )
+
+# Reset submission state if switching navigation tabs
+if "last_nav" not in st.session_state or st.session_state.last_nav != nav_option:
+  st.session_state.quiz_submitted = False
+  st.session_state.last_nav = nav_option
 
 # ----------------------------------------------------
 # 1. GENERATE AI QUIZ
@@ -51,7 +59,6 @@ if nav_option == "Generate AI Quiz":
   )
 
   if st.button("Generate Quiz via AI"):
-    # Check if API key exists in Streamlit secrets
     if "GROQ_API_KEY" not in st.secrets:
       st.error(
           "Groq API Key not found! Please add it to your Streamlit Cloud"
@@ -74,7 +81,7 @@ Return ONLY a valid JSON array. Each element in the array must be an object with
 Do not include any markdown code blocks or extra text. Just output the raw JSON array starting with [ and ending with ]."""
 
           chat_completion = client.chat.completions.create(
-              model="openai/gpt-oss-120b",
+              model="llama-3.3-70b-versatile",
               messages=[
                   {
                       "role": "system",
@@ -89,7 +96,6 @@ Do not include any markdown code blocks or extra text. Just output the raw JSON 
 
           response_text = chat_completion.choices[0].message.content.strip()
 
-          # Clean markdown tags if present
           if response_text.startswith("```"):
             response_text = response_text.split("```")[1]
             if response_text.startswith("json"):
@@ -127,35 +133,64 @@ elif nav_option == "Take Available Quiz":
   else:
     st.info(f"**Total Questions:** {len(questions)}")
 
-    with st.form(key="quiz_form"):
-      user_answers = {}
-      for i, q in enumerate(questions):
-        st.subheader(f"Q{i+1}: {q['question']}")
+    user_answers = {}
+    score = 0
+
+    # Render questions
+    for i, q in enumerate(questions):
+      st.subheader(f"Q{i+1}: {q['question']}")
+
+      # If already submitted, show results with ticks and crosses
+      if st.session_state.quiz_submitted:
+        selected_option = st.session_state.get(f"q_{selected_category}_{i}")
+        correct_option = q["answer"]
+
+        for opt in q["options"]:
+          if opt == correct_option and opt == selected_option:
+            st.markdown(f"✅ **{opt} (Correct)**")
+          elif opt == correct_option:
+            st.markdown(f"✅ **{opt} (Correct Answer)**")
+          elif opt == selected_option:
+            st.markdown(f"❌ **{opt} (Your Answer)**")
+          else:
+            st.markdown(f"- {opt}")
+
+        if selected_option == correct_option:
+          score += 1
+        st.write("---")
+
+      else:
+        # Interactive radio selection before submission
         user_answers[i] = st.radio(
-            f"Select option for Q{i+1}:", q["options"], key=f"q_{i}"
+            f"Select option for Q{i+1}:",
+            q["options"],
+            key=f"q_{selected_category}_{i}",
         )
         st.write("---")
 
-      submitted = st.form_submit_button("Submit Quiz")
+    # Submit or Retake buttons
+    if not st.session_state.quiz_submitted:
+      if st.button("Submit Quiz"):
+        st.session_state.quiz_submitted = True
+        st.rerun()
+    else:
+      # Calculate score display
+      total = len(questions)
+      percentage = (score / total) * 100
+      st.subheader("📊 Quiz Results")
+      st.success(f"🎉 Your Score: {score} / {total} ({percentage:.1f}%)")
 
-      if submitted:
-        score = 0
-        total = len(questions)
-        for i, q in enumerate(questions):
-          if user_answers.get(i) == q["answer"]:
-            score += 1
+      if score == total:
+        st.balloons()
+        st.write("🌟 Flawless! Perfect score!")
+      elif score >= total * 0.7:
+        st.write("👍 Great job! Solid understanding.")
+      else:
+        st.write("💡 Keep studying and try generating another quiz!")
 
-        st.subheader("📊 Quiz Results")
-        percentage = (score / total) * 100
-        st.success(f"🎉 Your Score: {score} / {total} ({percentage:.1f}%)")
-
-        if score == total:
-          st.balloons()
-          st.write("🌟 Flawless! Perfect score!")
-        elif score >= total * 0.7:
-          st.write("👍 Great job! Solid understanding.")
-        else:
-          st.write("💡 Keep studying and try generating another quiz!")
+      if st.button("🔄 Retake Quiz"):
+        st.session_state.quiz_submitted = False
+        st.rerun()
 
 # ----------------------------------------------------
 # 3. CREATE MANUAL QUESTION
