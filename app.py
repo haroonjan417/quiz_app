@@ -1,4 +1,5 @@
 import json
+import random
 import docx
 import pypdf
 import streamlit as st
@@ -122,7 +123,7 @@ if nav_option == "Generate AI Quiz":
             prompt = f"""Generate exactly {num_mcqs} multiple choice questions about '{source_content}'.
 Return ONLY a valid JSON array. Each element in the array must be an object with these exact keys:
 - "question": string
-- "options": list of 4 string options
+- "options": list of 4 string options (randomize the position of the correct answer among options)
 - "answer": the exact string from options that is correct
 
 Do not include any markdown code blocks, intro text, or extra commentary. Just output the raw JSON array starting with [ and ending with ]."""
@@ -134,7 +135,7 @@ Document content:
 ---
 Return ONLY a valid JSON array. Each element in the array must be an object with these exact keys:
 - "question": string
-- "options": list of 4 string options
+- "options": list of 4 string options (randomize the position of the correct answer among options)
 - "answer": the exact string from options that is correct
 
 Do not include any markdown code blocks, intro text, or extra commentary. Just output the raw JSON array starting with [ and ending with ]."""
@@ -151,8 +152,8 @@ Do not include any markdown code blocks, intro text, or extra commentary. Just o
                   },
                   {"role": "user", "content": prompt},
               ],
-              temperature=0.5,
-              max_tokens=8192,  # Increased token limit to allow up to 100 questions without truncation
+              temperature=0.7,
+              max_tokens=8192,
           )
 
           response_text = chat_completion.choices[0].message.content.strip()
@@ -168,7 +169,6 @@ Do not include any markdown code blocks, intro text, or extra commentary. Just o
                 response_text = part_clean
                 break
 
-          # Final safety clean for leading/trailing text
           start_idx = response_text.find("[")
           end_idx = response_text.rfind("]")
           if start_idx != -1 and end_idx != -1:
@@ -176,12 +176,18 @@ Do not include any markdown code blocks, intro text, or extra commentary. Just o
 
           questions_list = json.loads(response_text)
 
+          # Shuffle option positions to ensure correct answers are evenly distributed
+          for q in questions_list:
+            if "options" in q and "answer" in q:
+              random.shuffle(q["options"])
+
           if isinstance(questions_list, list) and len(questions_list) > 0:
             final_key = f"{quiz_title} ({len(questions_list)} Qs)"
             st.session_state.custom_quizzes[final_key] = questions_list
             st.success(
-                f"✅ Successfully generated {len(questions_list)} MCQs! Switch"
-                " to 'Take Available Quiz' in the sidebar to start."
+                f"✅ Successfully generated {len(questions_list)} MCQs with"
+                " shuffled options! Switch to 'Take Available Quiz' in the"
+                " sidebar to start."
             )
           else:
             st.error("Failed to parse valid questions from AI response.")
