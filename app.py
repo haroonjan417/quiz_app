@@ -113,6 +113,7 @@ if nav_option == "Generate AI Quiz":
     else:
       with st.spinner(
           f"Generating {num_mcqs} MCQs using Groq (openai/gpt-oss-20b)..."
+          " Please wait, large quizzes take a moment."
       ):
         try:
           client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -124,7 +125,7 @@ Return ONLY a valid JSON array. Each element in the array must be an object with
 - "options": list of 4 string options
 - "answer": the exact string from options that is correct
 
-Do not include any markdown code blocks or extra text. Just output the raw JSON array starting with [ and ending with ]."""
+Do not include any markdown code blocks, intro text, or extra commentary. Just output the raw JSON array starting with [ and ending with ]."""
           else:
             prompt = f"""Based on the following document content, generate exactly {num_mcqs} multiple choice questions.
 Document content:
@@ -136,7 +137,7 @@ Return ONLY a valid JSON array. Each element in the array must be an object with
 - "options": list of 4 string options
 - "answer": the exact string from options that is correct
 
-Do not include any markdown code blocks or extra text. Just output the raw JSON array starting with [ and ending with ]."""
+Do not include any markdown code blocks, intro text, or extra commentary. Just output the raw JSON array starting with [ and ending with ]."""
 
           chat_completion = client.chat.completions.create(
               model="openai/gpt-oss-20b",
@@ -144,21 +145,34 @@ Do not include any markdown code blocks or extra text. Just output the raw JSON 
                   {
                       "role": "system",
                       "content": (
-                          "You are a precise JSON-only quiz generator API."
+                          "You are a precise JSON-only quiz generator API. Output"
+                          " valid JSON arrays only."
                       ),
                   },
                   {"role": "user", "content": prompt},
               ],
-              temperature=0.7,
+              temperature=0.5,
+              max_tokens=8192,  # Increased token limit to allow up to 100 questions without truncation
           )
 
           response_text = chat_completion.choices[0].message.content.strip()
 
-          if response_text.startswith("```"):
-            response_text = response_text.split("```")[1]
-            if response_text.startswith("json"):
-              response_text = response_text[4:]
-            response_text = response_text.strip()
+          # Clean markdown tags if present
+          if "```" in response_text:
+            parts = response_text.split("```")
+            for part in parts:
+              part_clean = part.strip()
+              if part_clean.startswith("json"):
+                part_clean = part_clean[4:].strip()
+              if part_clean.startswith("[") and part_clean.endswith("]"):
+                response_text = part_clean
+                break
+
+          # Final safety clean for leading/trailing text
+          start_idx = response_text.find("[")
+          end_idx = response_text.rfind("]")
+          if start_idx != -1 and end_idx != -1:
+            response_text = response_text[start_idx : end_idx + 1]
 
           questions_list = json.loads(response_text)
 
@@ -171,6 +185,12 @@ Do not include any markdown code blocks or extra text. Just output the raw JSON 
             )
           else:
             st.error("Failed to parse valid questions from AI response.")
+        except json.JSONDecodeError as jde:
+          st.error(
+              f"JSON Parsing Error: The model output was cut off or improperly"
+              f" formatted. Try reducing the number of MCQs slightly or try"
+              f" again. Details: {jde}"
+          )
         except Exception as e:
           st.error(f"Error generating quiz: {e}")
 
